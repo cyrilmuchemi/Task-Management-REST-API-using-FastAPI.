@@ -37,3 +37,27 @@ def get_task(task_id: int):
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found!")
     return task
+
+class TaskUpdate(BaseModel):
+    title: str
+    description: str | None
+    completed: bool
+
+@app.put("/tasks/{task_id}")
+def update_task(task_id: int, updated_task: TaskUpdate):
+    task = tasks_db.get(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    task["title"] = updated_task.title
+    task["description"] = updated_task.description
+    task["completed"] = updated_task.completed
+    return task
+
+@app.delete("/tasks/{task_id}")
+def delete_task(task_id: int):
+    if task_id not in tasks_db:
+        raise HTTPException(status_code=404, detail="Task not found")
+    del tasks_db[task_id]
+    return{"message": f"Task {task_id} deleted successfully"}
+
