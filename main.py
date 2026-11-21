@@ -53,6 +53,12 @@ class TaskPatch(BaseModel):
 
         return cleaned
 
+class TaskResponse(BaseModel):
+    id: int
+    title: str
+    description: str | None = None
+    completed: bool
+
 
 @app.get("/")
 def home():
@@ -64,7 +70,7 @@ def healthy():
     return {"status": "healthy"}
 
 
-@app.post("/tasks", status_code=201)
+@app.post("/tasks", status_code=201, response_model=TaskResponse)
 def create_task(task: TaskCreate):
     global next_id
 
@@ -76,17 +82,19 @@ def create_task(task: TaskCreate):
         "title": task.title,
         "description": task.description,
         "completed": task.completed,
+        "internal_notes": "Created via API V1",
+        "internal_flag": True
     }
     tasks_db[task_id] = new_task
     return new_task
 
 
-@app.get("/tasks")
+@app.get("/tasks", response_model=list[TaskResponse])
 def get_tasks():
     return list(tasks_db.values())
 
 
-@app.get("/tasks/{task_id}")
+@app.get("/tasks/{task_id}", response_model=TaskResponse)
 def get_task(task_id: int):
     task = tasks_db.get(task_id)
     if task is None:
@@ -94,7 +102,7 @@ def get_task(task_id: int):
     return task
 
 
-@app.put("/tasks/{task_id}")
+@app.put("/tasks/{task_id}", response_model=TaskResponse)
 def update_task(task_id: int, updated_task: TaskUpdate):
     task = tasks_db.get(task_id)
     if task is None:
@@ -106,7 +114,7 @@ def update_task(task_id: int, updated_task: TaskUpdate):
     return task
 
 
-@app.patch("/tasks/{task_id}")
+@app.patch("/tasks/{task_id}", response_model=TaskResponse)
 def patch_task(task_id: int, patch: TaskPatch):
     task = tasks_db.get(task_id)
     if task is None:
