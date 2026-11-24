@@ -1,18 +1,16 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, field_validator
+from database import get_connection, initialize_database
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    initialize_database()
+    yield
 
-tasks_db: dict[int, dict] = {}
-next_id = 1
+app = FastAPI(lifespan=lifespan)
 
-
-class TaskBase(BaseModel):
-    title: str = Field(..., min_length=3, max_length=100)
-
-    @field_validator("title")
-    @classmethod
-    def validate_title(cls, value: str) -> str:
+def _validate_title_value(value: str) -> str:
         cleaned = value.strip()
         if not cleaned:
             raise ValueError("Title cannot be empty or whitespace only")
@@ -22,6 +20,15 @@ class TaskBase(BaseModel):
             raise ValueError("Title must not exceed 100 characters")
         return cleaned
 
+
+
+class TaskBase(BaseModel):
+    title: str = Field(..., min_length=3, max_length=100)
+
+    @field_validator("title")
+    @classmethod
+    def validate_title(cls, value: str) -> str:
+        return _validate_title_value(value)
 
 class TaskCreate(TaskBase):
     description: str | None = Field(default=None, max_length=500)
@@ -40,18 +47,10 @@ class TaskPatch(BaseModel):
 
     @field_validator("title")
     @classmethod
-    def validate_patch_title(cls, value: str | None) -> str | None:
+    def validate_title(cls, value: str | None) -> str | None:
         if value is None:
             return None
-        cleaned = value.strip()
-        if not cleaned:
-            raise ValueError("Title cannot be empty or have whitespace only")
-        if len(cleaned) < 3:
-            raise ValueError("Title must be at least 3 characters long")
-        if len(cleaned) > 100:
-            raise ValueError("Title must not exceed 100 characters")
-
-        return cleaned
+        return _validate_title_value(value)
 
 class TaskResponse(BaseModel):
     id: int
@@ -72,21 +71,32 @@ def healthy():
 
 @app.post("/tasks", status_code=201, response_model=TaskResponse)
 def create_task(task: TaskCreate):
-    global next_id
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO tasks (title, description, completed) VALUES (?, ?, ?)",
+            (task.title, task.description, int(task.completed))
+        )
+        conn.commit()
+        created_id = cursor.lastrowid
+        cursor.execute(
+            "SELECT id, title, description, completed FROM tasks WHERE id = ?",
+            (created_id,),
+        )
+        row = cursor.fetchone()
 
-    task_id = next_id
-    next_id += 1
+        if row is None:
+            raise HTTPException(status_code=500, detail="Failed to retrieve created task")
 
-    new_task = {
-        "id": task_id,
-        "title": task.title,
-        "description": task.description,
-        "completed": task.completed,
-        "internal_notes": "Created via API V1",
-        "internal_flag": True
-    }
-    tasks_db[task_id] = new_task
-    return new_task
+        return{
+            "id": row["id"],
+            "title": row["title"],
+            "description": row["description"],
+            "completed": bool(int(row["completed"]))
+        }
+    finally:
+        conn.close()
 
 
 @app.get("/tasks", response_model=list[TaskResponse])
