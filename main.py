@@ -101,15 +101,47 @@ def create_task(task: TaskCreate):
 
 @app.get("/tasks", response_model=list[TaskResponse])
 def get_tasks():
-    return list(tasks_db.values())
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, title, description, completed FROM tasks")
+        rows = cursor.fetchall()
+
+        return [
+            {
+                "id": row["id"],
+                "title": row["title"],
+                "description": row["description"],
+                "completed": bool(row["completed"])
+            }
+            for row in rows
+        ]
+    finally:
+        conn.close()
 
 
 @app.get("/tasks/{task_id}", response_model=TaskResponse)
 def get_task(task_id: int):
-    task = tasks_db.get(task_id)
-    if task is None:
-        raise HTTPException(status_code=404, detail="Task not found")
-    return task
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, title, description, completed FROM tasks WHERE id = ?",
+            (task_id,),
+        )
+        row = cursor.fetchone()
+
+        if row is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        return {
+            "id": row["id"],
+            "title": row["title"],
+            "description": row["description"],
+            "completed": bool(row["completed"])
+        }
+    finally:
+        conn.close()
 
 
 @app.put("/tasks/{task_id}", response_model=TaskResponse)
