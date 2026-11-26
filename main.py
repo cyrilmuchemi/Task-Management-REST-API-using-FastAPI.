@@ -146,33 +146,137 @@ def get_task(task_id: int):
 
 @app.put("/tasks/{task_id}", response_model=TaskResponse)
 def update_task(task_id: int, updated_task: TaskUpdate):
-    task = tasks_db.get(task_id)
-    if task is None:
-        raise HTTPException(status_code=404, detail="Task not found")
+    conn = get_connection()
+    try:
+        cursor =  conn.cursor()
+        cursor.execute(
+            "SELECT id FROM tasks WHERE id = ?",
+            (task_id,),
+        )
 
-    task["title"] = updated_task.title
-    task["description"] = updated_task.description
-    task["completed"] = updated_task.completed
-    return task
+        existing = cursor.fetchone()
 
+        if existing is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        cursor.execute(
+            """
+            UPDATE tasks SET title = ?, description = ?, completed = ? WHERE id = ?
+            """,
+            (
+                updated_task.title,
+                updated_task.description,
+                int(updated_task.completed),
+                task_id,
+            ),
+        )
+        conn.commit()
+
+        cursor.execute(
+            "SELECT id, title, description, completed FROM tasks WHERE id = ?",
+            (task_id,),
+        )
+
+        row = cursor.fetchone()
+        if row is None:
+            raise HTTPException(status_code=500, detail="Failed to retrieve updated task")
+
+        return{
+            "id": row["id"],
+            "title": row["title"],
+            "description": row["description"],
+            "completed": bool(row["completed"])
+        }
+    finally:
+        conn.close()
 
 @app.patch("/tasks/{task_id}", response_model=TaskResponse)
 def patch_task(task_id: int, patch: TaskPatch):
-    task = tasks_db.get(task_id)
-    if task is None:
-        raise HTTPException(status_code=404, detail="Task not found")
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, title, description, completed FROM tasks WHERE id = ?",
+            (task_id,),
+        )
 
-    updates = patch.model_dump(exclude_unset=True)
-    for field, value in updates.items():
-        task[field] = value
+        row = cursor.fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Task not found")
 
-    return task
+        updates = patch.model_dump(exclude_unset=True)
+        if not updates:
+            return{
+                "id": row["id"],
+                "title": row["title"],
+                "description": row["description"],
+                "completed": bool(row["completed"])
+            }
+
+        set_clauses: list[str] = []
+        params: list[object] = []
+
+        for field, value in updates.items():
+            if field == "title":
+                if value is None:
+                    raise HTTPException(status_code=422, detail="Title cannot be null")
+                set_clauses.append("title = ?")
+                params.append(value)
+            elif field == "description":
+                set_clauses.append("description = ?")
+                params.append(value)
+            elif field == "completed":
+                if value is None:
+                    raise HTTPException(status_code=422, detail="Completed cannot be null")
+                set_clauses.append("completed = ?")
+                params.append(int(value))
+
+        params.append(task_id)
+        sql = f"UPDATE tasks SET {', '.join(set_clauses)} WHERE id = ?"
+        cursor.execute(sql, tuple(params))
+        conn.commit()
+
+        cursor.execute(
+            "SELECT id, title, description, completed FROM tasks WHERE id = ?",
+            (task_id,),
+        )
+
+        updated_row = cursor.fetchone()
+        if updated_row is None:
+            raise HTTPException(status_code=500, detail="Failed to retrieve updated task")
+
+        return {
+            "id": updated_row["id"],
+            "title": updated_row["title"],
+            "description": updated_row["description"],
+            "completed": bool(updated_row["completed"])
+        }
+
+    finally:
+        conn.close()
 
 
 @app.delete("/tasks/{task_id}")
 def delete_task(task_id: int):
-    if task_id not in tasks_db:
-        raise HTTPException(status_code=404, detail="Task not found")
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id FROM tasks WHERE id = ?",
+            (task_id,),
+        )
 
-    del tasks_db[task_id]
-    return {"message": f"Task {task_id} deleted successfully"}
+        existing = cursor.fetchone()
+        if existing is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        cursor.execute(
+            "DELETE FROM tasks WHERE id = ?",
+            (task_id,),
+        )
+        conn.commit()
+
+        return{"message": f"Task {task_id} deleted successfully"}
+    
+    finally:
+        conn.close()
